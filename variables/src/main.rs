@@ -6,7 +6,6 @@ fn main() {
 
     const y : u32= 5;
     println!("{}", y);
-
     // let y = 7;
     // println!("{}", y);
 
