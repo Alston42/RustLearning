@@ -475,3 +475,63 @@ $ RUST_BACKTRACE=1 cargo run
 ```
 
 如果代码 panic，就没有恢复的可能。选择返回 Result 值的话，就将选择权交给了调用。
+
+
+`&[i32]`: 变长度数组
+`[i32, i32]`: 定长度数组
+
+## 泛型
+`泛型（generics）`: 是具体类型或其他属性的抽象替代。
+在 impl 之后声明泛型 T ，这样 Rust 就知道 Point 的尖括号中的类型是泛型而不是具体类型。
+Rust 通过在编译时进行泛型代码的 单态化（monomorphization）来保证效率。单态化是一个通过填充编译时使用的具体类型，将通用代码转换为特定代码的过程
+我们可以使用泛型来编写不重复的代码，而 Rust 将会为每一个实例编译其特定类型的代码。这意味着在使用泛型时没有运行时开销；当代码运行，它的执行效率就跟好像手写每个具体定义的重复代码一样。
+
+### trait
+trait 告诉 Rust 编译器某个特定类型拥有可能与其他类型共享的功能。可以通过 trait 以一种抽象的方式定义共享的行为。可以使用 trait bounds 指定泛型是任何拥有特定行为的类型。
+类似于`接口（interfaces）`
+
+如果可以对不同类型调用相同的方法的话，这些类型就可以共享相同的行为了。trait 定义是一种将方法签名组合起来的方法，目的是定义一个实现某些目的所必需的行为的集合。
+
+```rust
+pub trait Summary {
+    fn summarize(&self) -> String;
+}
+
+pub struct NewsArticle {
+    pub headline: String,
+    pub location: String,
+    pub author: String,
+    pub content: String,
+}
+
+impl Summary for NewsArticle {
+    fn summarize(&self) -> String {
+        format!("{}, by {} ({})", self.headline, self.author, self.location)
+    }
+}
+
+pub struct Tweet {
+    pub username: String,
+    pub content: String,
+    pub reply: bool,
+    pub retweet: bool,
+}
+
+impl Summary for Tweet {
+    fn summarize(&self) -> String {
+        format!("{}: {}", self.username, self.content)
+    }
+}
+```
+
+`相干性（coherence）`限制: `孤儿规则（orphan rule）`，其得名于不存在父类型。确保了其他人编写的代码不会破坏你代码。实现 trait 时需要注意的一个限制是，只有当 trait 或者要实现 trait 的类型位于 crate 的本地作用域时，才能为该类型实现 trait
+
+pub trait Summary {
+    fn summarize()
+}
+
+#### 默认实现
+有时为 trait 中的某些或全部方法提供默认的行为，这样当为某个特定类型实现 trait 时，可以选择保留或重载每个方法的默认行为。
+如果想要对 NewsArticle 实例使用这个默认实现，而不是定义一个自己的实现，则可以通过 impl Summary for NewsArticle {} 指定一个空的 impl 块。
+
+`grep`: Globally search a Regular Expression and Print.
