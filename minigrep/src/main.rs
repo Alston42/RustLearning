@@ -1,4 +1,4 @@
-use std::{env, process, fs};
+use std::{env, process};
 
 use minigrep::Config;
 
@@ -17,11 +17,5 @@ fn main() {
         println!("Application error: {}", e);
         process::exit(1);
     }
-
-    let contents = fs::read_to_string(config.filename)
-        .expect("Something went wrong reading the file");
-
-    println!("With text:\n{}", contents);
-    
 }
 
