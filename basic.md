@@ -380,8 +380,9 @@ Rust 的所有权规则：
 
 `借用(borrowing)`：create a reference
 - 借用规则：
-    - 同一块内存可以同时拥有多个不可变引用，或者只能拥有一个可变引用（防止数据竞争[data race]）
+    - 在任意时刻，同一块内存可以同时拥有多个不可变引用，或者只能拥有一个可变引用（防止数据竞争[data race]）
     - 一个引用的作用域从声明的地方开始一直持续到最后一次使用为止。区别于普通变量
+    - 引用必须总是有效的
 
 - 数据竞争:
     - 两个或更多指针同时访问同一数据。
@@ -1062,9 +1063,15 @@ $ RUST_BACKTRACE=1 cargo run
 
 在 `impl` 之后声明泛型 `T` ，这样 Rust 就知道 `Class`对象类型的尖括号中的类型是泛型而不是具体类型。
 
+泛型定义：
+`struct ClassName<T>`
+
+方法实现：
+`impl<T> ClassName<T>`
+
 编译时泛型代码经过了`单态化（monomorphization）`处理来保证效率。
 
-`单态化`: 通过填充编译时使用的具体类型，将通用代码转换为特定代码的过程
+`单态化`: 编译器在编译时为填充了泛型类型参数的每一个具体类型生成了非泛型的函数和方法实现，这些代码将进行 `静态分发(static dispatch)`，得名于编译器在编译时就知晓调用了什么方法
 
 使用泛型时相比重复编写多特定类型的代码没有额外的`runtime overhead(运行时开销)`，
 
@@ -1183,6 +1190,298 @@ impl<T: Display + PartialOrd> Pair<T> {
     }
 }
 ```
+
+### 关联类型(associated types)
+
+```rust
+pub trait Iterator {
+    type Item;
+
+    fn next(&mut self) -> Option<Self::Item>;
+}
+```
+
+```rust
+impl Iterator for Counter {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // --snip--
+```
+
+```rust
+pub trait Iterator<T> {
+    fn next(&mut self) -> Option<T>;
+}
+```
+```rust
+impl Iterator<u32> for Counter  {
+    // ...
+}
+```
+
+使用泛型的trait时，可为单一对象类型实现不同的trait泛型参数，但不得不在每一个实现中标注trait泛型参数
+
+关联类型只能为单个对象类型关联一种具体类型参数的trait
+
+### 默认泛型类型参数
+
+为泛型类型指定默认类型的语法是在声明泛型类型时使用 `<PlaceholderType=ConcreteType>`
+
+### 运算符重载(Operators Overloading)
+
+Rust 并不允许创建自定义运算符或重载任意运算符，只有在 `std::ops` 中所列出的运算符和相应的 trait 可以通过实现运算符相关 trait 来重载
+
+```rust
+use std::ops::Add;
+
+#[derive(Debug, PartialEq)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Add for Point {
+    type Output = Point;
+
+    fn add(self, other: Point) -> Point {
+        Point {
+            x: self.x + other.x,
+            y: self.y + other.y,
+        }
+    }
+}
+
+fn main() {
+    assert_eq!(Point { x: 1, y: 0 } + Point { x: 2, y: 3 },
+               Point { x: 3, y: 3 });
+}
+
+
+trait Add<RHS=Self> {
+    type Output;
+
+    fn add(self, rhs: RHS) -> Self::Output;
+}
+```
+
+`RHS`: right hand side
+
+### 完全限定语法与消歧义：调用不同trait相同名称的方法
+
+```rust
+trait Pilot {
+    fn fly(&self);
+}
+
+trait Wizard {
+    fn fly(&self);
+}
+
+struct Human;
+
+impl Pilot for Human {
+    fn fly(&self) {
+        println!("This is your captain speaking.");
+    }
+}
+
+impl Wizard for Human {
+    fn fly(&self) {
+        println!("Up!");
+    }
+}
+
+impl Human {
+    fn fly(&self) {
+        println!("*waving arms furiously*");
+    }
+}
+```
+```rust
+fn main() {
+    let person = Human;
+    Pilot::fly(&person);
+    Wizard::fly(&person);
+    person.fly();  // 调用直接实现在 Human 上的 fly 方法
+    // Human::fly(&person);
+}
+```
+如果有两个方法都实现了同一 trait，Rust 可以根据 self 的类型计算出应该使用哪一个 trait 实现。
+
+若无 self 参数：
+```rust
+trait Animal {
+    fn baby_name() -> String;
+}
+
+struct Dog;
+
+impl Dog {
+    fn baby_name() -> String {
+        String::from("Spot")
+    }
+}
+
+impl Animal for Dog {
+    fn baby_name() -> String {
+        String::from("puppy")
+    }
+}
+
+fn main() {
+    println!("A baby dog is called a {}", Dog::baby_name());
+}
+```
+
+可用完全限定语法 `<Dog as Animal>::baby_name()`，指定调用的是 Dog 上 Animal trait 实现中的 baby_name 函数
+
+一般地：`<Type as Trait>::function(receiver_if_method, next_arg, ...);`
+
+### 父(超)trait (supertrait)
+
+某个trait的实现依赖于另一个trait的功能，被依赖的trait即父trait，因而要求实现了父trait的类型
+
+```rust
+use std::fmt;
+
+trait OutlinePrint: fmt::Display {
+    fn outline_print(&self) {
+        let output = self.to_string();
+        let len = output.len();
+        println!("{}", "*".repeat(len + 4));
+        println!("*{}*", " ".repeat(len + 2));
+        println!("* {} *", output);
+        println!("*{}*", " ".repeat(len + 2));
+        println!("{}", "*".repeat(len + 4));
+    }
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+impl fmt::Display for Point {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({}, {})", self.x, self.y)
+    }
+}
+impl OutlinePrint for Point {}
+```
+类似于为 trait 增加 trait bound
+
+### newtype模式
+
+绕开孤儿原则的限制，可在外部类型上实现外部trait
+
+在一个元组结构体中创建一个新类型，其带有一个字段作为希望实现外部trait的外部类型的简单封装。接着这个封装类型对于 crate 是本地的，这样就可以在这个封装上实现外部trait
+
+`Newtype`: 源自 Haskell 编程语言。使用这个模式没有运行时性能消耗，这个封装类型在编译时就被省略了。
+
+```rust
+use std::fmt;
+
+struct Wrapper(Vec<String>);
+
+impl fmt::Display for Wrapper {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[{}]", self.0.join(", "))
+    }
+}
+
+fn main() {
+    let w = Wrapper(vec![String::from("hello"), String::from("world")]);
+    println!("w = {}", w);
+}
+```
+
+缺点是，因为 Wrapper 是一个新类型，它没有定义于其值之上的方法；想像 Vec<T> 那样对待 Wrapper，可为封装类型实现 Deref trait，代理到self.0，这是一种解决方案。
+
+## 高级类型
+
+### newtype模式
+
+- 静态的确保某值不被混淆
+- 用来表示一个值的单元
+- 抽象掉一些类型的实现细节
+
+### 类型别名(type alias)
+
+`type Kilometers = i32;`: 意味着 `Kilometers` 是 `i32` 的 **同义词（synonym）**
+
+主要用途是为很长的类型重命名，减少重复
+
+`type Result<T> = std::result::Result<T, std::io::Error>;`
+
+### never type
+
+`!`: empty type，因其没有值，又称 never type，在函数从不返回的时候充当返回值，相当于 C/C++ 的 void
+
+`发散函数(diverging functions)`: 发散函数
+
+```rust
+let guess: u32 = match guess.trim().parse() {
+    Ok(num) => num,
+    Err(_) => continue,
+};
+```
+`continue`返回`!`，把控制权交回上层循环
+
+描述 `!` 的行为的正式方式是 never type 可以**强转**为任何其他类型，故Rust可自行推断`guess`的类型为`u32`
+
+```rust
+impl<T> Option<T> {
+    pub fn unwrap(self) -> T {
+        match self {
+            Some(val) => val,
+            None => panic!("called `Option::unwrap()` on a `None` value"),
+        }
+    }
+}
+```
+`panic!` 是 `!` 类型，被强转为 `T` 类型，故整个 `match` 表达式的结果为 `T` 类型
+
+### 动态大小类型
+
+dynamically sized types，DST,unsized types
+
+允许我们处理只有在运行时才知道大小的类型
+
+```rust
+let s1: str = "Hello there!";
+let s2: str = "How's it going?";
+```
+Rust 需要知道应该为特定类型的值分配多少内存，同时所有同一类型的值必须使用相同数量的内存，这对于str无法实现！
+
+虽然 &T 是一个储存了 T 所在的内存位置的单个值，但&str则是**两个**值：str的地址和其长度。这样，&str 就有了一个在编译时可以知道的大小：它是 usize(地址信息) + usize(长度信息)
+
+这是 Rust 中 `DST` 的常规用法：它们有一些额外的元信息来储存动态信息的大小
+ 
+每一个 trait 都是一个可以通过 trait 名称来引用的动态大小类型，例如为了将 trait 用于 trait 对象，必须将他们放入指针之后，比如 `&dyn Trait` 或 `Box<dyn Trait>`，`Rc<dyn Trait>`
+
+`Sized` trait: 为了处理 DST，Rust 内置的确定一个类型的大小是否在编译时可知的trait
+
+```rust
+fn generic<T>(t: T) {
+    // --snip--
+}
+```
+实际上应当为
+```rust
+fn generic<T: Sized>(t: T) {
+    // --snip--
+}
+```
+
+泛型函数默认只能用于在编译时已知大小的类型，可如下放宽此限制:
+```rust
+fn generic<T: ?Sized>(t: &T) {
+    // --snip--
+}
+```
+`?Sized` trait bound 指 `T` 可能是也可能不是 `Sized` 的，此语法只能用于 Sized ，而不能用于其他 trait
+
+另外将 t 参数的类型从 T 变为了 &T：因为其类型可能不是 Sized 的，所以需要将其置于某种指针之后
 
 ## lifetime
 `生命周期（lifetime）`： 引用保持有效的作用域
@@ -1353,6 +1652,8 @@ mod tests {
 
 可以捕获环境的匿名函数，闭包被定义时周围的作用域被称为其`环境(environment)`，而非闭包被调用时调用者附近的作用域
 
+若强制闭包获取其使用的环境值的所有权，可在参数列表前使用 `move` 关键字
+
 ```rust
 | param1, param2, ... | {
     // ...
@@ -1394,7 +1695,29 @@ let expensive_closure = |num: u32| -> u32 {
 - `FnMut` 获取可变的借用值因此可以改变其环境
 - `Fn` 从其环境获取不可变的借用值
 
-## 迭代器(iterator)
+#### 返回闭包
+
+闭包表现为 trait，这意味着不能直接返回闭包。
+
+对于大部分需要返回 trait 的情况，可以使用实现了期望返回的 trait 的具体类型来替代函数的返回值
+
+但是这不能用于闭包，因为他们没有一个可返回的具体类型，`Fn`/`fn`不允许作为返回值类型
+
+```rust
+fn returns_closure() -> Fn(i32) -> i32 {
+    |x| x + 1
+}
+```
+错误又一次指向了 Sized trait！Rust 并不知道需要多少空间来储存闭包
+
+可修改为:
+```rust
+fn returns_closure() -> Box<dyn Fn(i32) -> i32> {
+    Box::new(|x| x + 1)
+}
+```
+
+### 迭代器(iterator)
 
 负责遍历序列中的每一项和决定序列何时结束的逻辑。
 
@@ -1445,7 +1768,7 @@ let total: i32 = v1_iter.sum();
 
 `into_iter`: 创建一个获取 `vector` 所有权的迭代器
 
-### 迭代器适配器(iterator adaptors)
+#### 迭代器适配器(iterator adaptors)
 
 `Iterator` trait 中定义的方法
 
@@ -1459,7 +1782,7 @@ let v2: Vec<_> = v1.iter().map(|x| x + 1).collect();
 
 `filter` 方法: 筛选迭代器中符合闭包体中定义条件的项并保留到新迭代器中，否则放弃掉
 
-#### 自定义迭代适配器
+##### 自定义迭代适配器
 
 ```rust
 struct Counter {
@@ -1487,7 +1810,7 @@ impl Iterator for Counter {
 }
 ```
 
-### 零成本抽象
+#### 零成本抽象
 
 `零开销(zero-overhead)`: What you don’t use, you don’t pay for. And further: What you do use, you couldn’t hand code any better.
 
@@ -1512,23 +1835,105 @@ for i in 12..buffer.len() {
 
 `展开(unroll)`: 一种移除循环控制代码的开销并替换为每个迭代中的重复代码的优化。
 
+### 函数指针
+
+向函数传递常规函数
+
+`Fn`: 闭包 trait，需声明一个带有 `Fn` 作为 trait bound 的泛型参数。
+
+`fn`: 函数指针这一类型，可直接指定作为参数
+
+函数指针实现了所有三个闭包 trait（Fn、FnMut 和 FnOnce），所以总是可以在调用期望闭包的函数时传递函数指针作为参数，因而倾向于编写使用泛型和闭包 trait 的函数
+
+```rust
+fn do_twice(f: fn(i32) -> i32, arg: i32) -> i32 {
+    f(arg) + f(arg)
+}
+```
+
+```rust
+let list_of_numbers = vec![1, 2, 3];
+let list_of_strings: Vec<String> = list_of_numbers
+    .iter()
+    .map(|i| i.to_string())
+    .collect();
+```
+
+```rust
+let list_of_numbers = vec![1, 2, 3];
+let list_of_strings: Vec<String> = list_of_numbers
+    .iter()
+    .map(ToString::to_string)   // 完全限定语法
+    .collect();
+```
+
+### 宏(Macro)
+
+包括:
+- 使用 `macro_rules!` 的 **声明***（Declarative）*宏
+- 三种**过程***（Procedural）*宏：
+    - 自定义 #[derive] 宏在结构体和枚举上指定通过 derive 属性添加的代码
+    - 类属性（Attribute-like）宏定义可用于任意项的自定义属性
+    - 类函数宏看起来像函数不过作用于作为参数传递的 token
+
+从根本上来说，宏是一种为写其他代码而写代码的方式，即所谓的 **元编程***（metaprogramming）*
+
+宏可以在编译器翻译代码前展开
+
+一个函数标签必须声明函数参数个数和类型。相比之下，宏能够接受不同数量的参数
+
+#### 声明宏
+
+声明宏允许我们编写一些类似 Rust `match` 表达式的代码
+
+```rust
+#[macro_export]
+macro_rules! vec {
+    ( $( $x:expr ),* ) => {
+        {
+            let mut temp_vec = Vec::new();
+            $(
+                temp_vec.push($x);
+            )*
+            temp_vec
+        }
+    };
+}
+```
+`$x:expr`: 匹配 Rust 的任意表达式
+`$( $x:expr ) `: 捕获符合括号内模式的值
+`*`: 该模式匹配零个或更多个`*`之前的模式
+`,`: 匹配逗号
+
+#[macro_export] 标注说明，只要将定义了宏的 crate 引入作用域，宏就应当是可用的
+
+#### 过程宏
+
+`TokenStream` 类型由包含在 Rust 中的 `proc_macro` crate 定义，宏操作的源代码构成了输入 TokenStream，宏产生的代码是输出 TokenStream
+
+参考项目文件
+
 ## 面向对象编程（Object-Oriented Programming，OOP）
 一种模式化编程方式。所共享的一些特性往往是对象、封装和继承三要素
 
-## 对象
+### 对象
 
 **一个 `对象` 包含数据和操作这些数据的过程，这些过程通常被称为 `方法`**
 
-符合 `Rust` 中 `enum`，`struct`等实现
+Rust 刻意不将结构体与枚举称为 “对象”，因为其字段中的数据和 impl 块中定义的行为是分开的，不同于其他语言中将数据和行为组合进一个称为对象的概念中。
 
-## 封装（encapsulation）
+类似于enum，struct，trait等实现
+
+不能向 trait 对象增加数据，trait 允许对通用行为进行抽象
+
+### 封装（encapsulation）
 
 - **对象的实现细节不能被使用对象的代码获取到，唯一与对象交互的方式是通过对象提供的公有 `API`；**
 - **使用对象的代码无法深入到对象内部并直接改变数据或者行为**
 
 封装使得改变和重构对象的内部时无需改变使用对象的代码。
 
-## 继承（Inheritance）
+### 继承（Inheritance）
 **一个对象可以定义为继承另一个对象的定义，从而可以获得父对象的数据和行为，而无需重新定义**
 
 选择继承有两个主要的原因:
@@ -1544,3 +1949,841 @@ for i in 12..buffer.len() {
 近来继承作为一种语言设计的解决方案在很多语言中失宠了，因为其时常带有共享多于所需的代码的风险。子类不应总是共享其父类的所有特征，但是继承却始终如此。如此会使程序设计更为不灵活，并引入无意义的子类方法调用，或由于方法实际并不适用于子类而造成错误的可能性。
 
 某些语言还只允许子类继承一个父类，进一步限制了程序设计的灵活性。
+
+### 为不同类型而设计的trait对象
+
+存储多个涵盖了有限多种类型的枚举的向量，实现混合储存的容器，然而无法扩展有效的类型集合，所有可能的类型都被预先定义好了
+
+`GUI(Graphical User Interface)`: 图形用户接口，通过遍历列表并调用每一个项目的 draw 方法来将其绘制到屏幕上
+
+in src/lib.rs:
+```rust
+pub trait Draw {
+    fn draw(&self);
+}
+
+pub struct Screen<T> {
+    pub components: Vec<Box<dyn Draw>>,
+}
+
+impl Screen {
+    pub fn run(&self) {
+        for component in self.components.iter() {
+            component.draw();
+        }
+    }
+}
+```
+
+不同于
+```rust
+pub struct Screen<T: Draw> {
+    pub components: Vec<T>,
+}
+```
+trait bound限制了components中各元素类型必须一致，而关键字`dyn`标明的 trait 对象，允许在运行时替代实现了该trait的多种具体类型
+
+in src/lib.rs:
+```rust
+pub struct Button {
+    pub width: u32,
+    pub height: u32,
+    pub label: String,
+}
+
+impl Draw for Button {
+    fn draw(&self) {
+        // code to actually draw a button
+    }
+}
+```
+
+in src/main.rs:
+```rust
+use gui::{Screen, Button};
+
+struct SelectBox {
+    width: u32,
+    height: u32,
+    options: Vec<String>,
+}
+
+impl Draw for SelectBox {
+    fn draw(&self) {
+        // code to actually draw a select box
+    }
+}
+
+fn main() {
+    let screen = Screen {
+        components: vec![
+            Box::new(SelectBox {
+                width: 75,
+                height: 10,
+                options: vec![
+                    String::from("Yes"),
+                    String::from("Maybe"),
+                    String::from("No")
+                ],
+            }),
+            Box::new(Button {
+                width: 50,
+                height: 10,
+                label: String::from("OK"),
+            }),
+        ],
+    };
+
+    screen.run();
+}
+```
+调用外部库的开发者，除了预先编写在里的类型之外，自行额外自定义了新的类型 `Select Box`，然而只要它实现了 `Draw` trait，就可以像库里的`Button`一样由 `Screen` 操作并绘制这个新类型
+
+trait 对象，只关心类型所反映的特征信息而不是具体类型本身，类似于动态类型语言中 `鸭子类型(duck typing)` 的概念: 如果它走起来像一只鸭子，叫起来像一只鸭子，那么它就是一只鸭子！
+
+`动态分发(dynamic dispatch)`: 编译器在编译时无法知晓所有可能用于 trait 对象代码的类型，无法知晓调用了什么方法，因而会生成只有在运行时(使用trait对象中的指针)才能确定要调用什么方法的代码。
+
+只有 `对象安全(object safe)` 的 trait 才可以组成 trait 对象
+
+对象安全原则:
+
+一个 trait 中所有的方法都满足: 
+- 返回值类型不为 Self
+
+如果 trait 方法返回具体的 Self 类型，但是 trait 对象忘记了其真正的类型，那么方法不可能使用已经忘却的原始具体类型
+
+- 方法没有任何泛型类型参数
+
+同理对于泛型类型参数来说，当使用 trait 时其会放入具体的类型参数：此具体类型变成了实现该 trait 的类型的一部分。当使用 trait 对象时其具体类型被抹去了，故无从得知放入泛型参数类型的类型是什么。
+
+Example:
+```rust
+pub trait Clone {
+    fn clone(&self) -> Self;
+}
+```
+
+### 状态模式(state pattern)
+
+该模式的关键在于一个值有某些内部状态，体现为一系列的状态对象，同时值的行为随着其内部状态而改变。状态对象共享功能：当然，在 Rust 中使用结构体和 trait 而不是对象和继承。每一个状态对象负责其自身的行为，以及该状态何时应当转移至另一个状态。持有一个状态对象的值对于不同状态的行为以及何时状态转移毫不知情。
+
+如果要创建一个不使用状态模式的替代实现，则可能会在 Post 的方法中，或者甚至于在 main 代码中用到 match 语句，来检查博文状态并在这里改变其行为。这意味着需要查看很多位置来理解处于发布状态的博文的所有逻辑！这在增加更多状态时会变得更糟：每一个 match 语句都会需要另一个分支。
+
+对于状态模式来说，Post 的方法和使用 Post 的位置无需 match 语句，同时增加新状态只涉及到增加一个新 struct 和为其实现 trait 的方法。
+
+状态模式的一个缺点是因为状态实现了状态之间的转换，一些状态会相互联系。
+
+另一个缺点是会发现一些重复的逻辑
+
+## 智能指针
+### Box<T>
+允许将一个值放在堆上而不是栈上，留在栈上的则是指向堆数据的指针
+
+- 当有一个在编译时未知大小的类型，而又想要在需要确切大小的上下文中使用这个类型值的时候
+- 当有大量数据并希望在确保数据不被拷贝的情况下转移所有权的时候
+- 当希望拥有一个值并只关心它的类型是否实现了特定 trait 而不是其具体类型的时候
+
+
+`递归类型(recursive type)`: 其值的一部分可以是相同类型的另一个值。这种值的嵌套理论上可以无限的进行下去
+
+`cons list`: 每一项都包含两个元素，当前项的值和下一项，其最后一项值包含一个叫做 Nil 的值且没有下一项, 它宣布列表的终止
+
+```rust
+enum List {
+    Cons(i32, List),
+    Nil,
+}
+use crate::List::{Cons, Nil};
+
+fn main() {
+    let list = Cons(1, Cons(2, Cons(3, Nil)));
+}
+```
+
+实现无法计算 `List` 实际大小
+
+Rust 需要在编译时知道类型占用多少空间，在类型定义中给入已知大小的 box 指针指向下一同类型的值即可实现
+
+enum只会使用一个成员，所以其需要的最大空间是存储其最大成员所需的空间大小
+
+```rust
+enum List {
+    Cons(i32, Box<List>),
+    Nil,
+}
+use crate::List::{Cons, List, Nil};
+
+fn main() {
+    let list = Cons(1,
+        Box::new(Cons(2,
+            Box::new(Cons(3,
+                Box::new(Nil))))));
+}
+```
+
+此时任何 `List` 值最多需要一个 `i32` 加上 `box` 指针数据的大小(usize)。
+
+`Box<T>` 类型是一个智能指针，因为它实现了 `Deref trait`，它允许 `Box<T>` 值被当作引用对待
+
+#### Deref trait
+
+实现 `Deref trait` 允许重载(不可变引用的)`解引用运算符（dereference operator）*`
+
+```rust
+struct MyBox<T>(T);
+
+impl<T> MyBox<T> {
+    fn new(x: T) -> MyBox<T> {
+        MyBox(x)
+    }
+}
+
+use std::ops::Deref;
+
+impl<T> Deref for MyBox<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+```
+
+`*y` == `*(y.deref())`
+
+`* 运算符` 实际被替换成了先调用 `deref` 方法再接着使用 `*` 解引用的操作，且只会发生一次，不会对 * 操作符无限递归替换
+
+函数和方法的隐式解引用强制转换（deref coercions），发生于被传递的值的引用与函数或方法中定义的参数类型不匹配时，这时会有一系列的 `deref` 方法被调用，把我们提供的参数类型转换成函数或方法需要的参数类型，无需增加过多显式使用 & 和 * 的引用和解引用的负担。
+
+mutability: 
+T: Deref<Target=U> ：从 &T 到 &U。
+T: DerefMut<Target=U> ：从 &mut T 到 &mut U。
+T: Deref<Target=U> ：从 &mut T 到 &U。
+
+可变引用可强转为不可变引用，但反之是 **不可能** 的
+
+因为将不可变引用转换为可变引用则需要内存只能有一个不可变引用，然而这点无法保证
+
+#### Drop trait
+
+`Box<T>` 值离开作用域时，由于 `Box<T>` 类型 `Drop trait` 的实现，box 所指向的堆数据也会被清除，不需要在程序中到处编写在实例结束时清理这些变量的代码 
+
+```rust
+impl Drop for ClassName {
+    fn drop(&mut self) {
+        // ...
+    }
+}
+```
+
+##### std::mem::drop
+
+提早在作用域结束之前强制释放变量
+
+### Rc<T>
+
+引用计数(**r**eference **c**ounting)，记录一个内存被引用的数量来知晓其是否仍在被使用，倘若有零个引用，代表无任何有效引用并自动清理
+
+通过不可变引用， `Rc<T>` 允许在程序的多个部分之间**只读**地共享数据
+
+只用于单线程场景
+
+```rust
+let a = Cons(5,
+    Box::new(Cons(10,
+        Box::new(Nil))));
+let b = Cons(3, Box::new(a));
+let c = Cons(4, Box::new(a));
+```
+创建 List b 时，a已经被移动进了b
+
+```rust
+enum List {
+    Cons(i32, Rc<List>),
+    Nil,
+}
+
+use std::rc::Rc;
+use crate::List::{Cons, Nil};
+
+let a = Rc::new(Cons(5, Rc::new(Cons(10, Rc::new(Nil)))));
+let b = Cons(3, Rc::clone(&a));
+let c = Cons(4, Rc::clone(&a));
+```
+
+也可`a.clone()`，但`Rc::clone`只会增加引用计数，更快
+
+`Rc::strong_count(Rc_ptr)`: 获取引用计数
+
+`Drop trait` 的实现当 `Rc<T>` 值离开作用域时自动减少引用计数
+
+### RefCell<T>
+
+在编译时检查借用规则的优势是这些错误将在开发过程的早期被捕获，同时对运行时没有性能影响
+
+在运行时检查借用规则的好处则是允许出现特定内存安全的场景，而它们在编译时检查中是不允许的。静态分析，正如 `Rust` 编译器，是天生保守的。但代码的一些属性不可能通过分析代码发现：其中最著名的就是 `停机问题（Halting Problem）`
+
+- `Rc<T>` 允许相同数据有多个所有者；`Box<T>` 和 `RefCell<T>` 有单一所有者。
+- `Box<T>` 允许在编译时执行不可变或可变借用检查；`Rc<T>` 仅允许在编译时执行不可变借用检查，倘若违反会触发编译错误；`RefCell<T>` 允许在运行时执行不可变或可变借用检查，倘若违反则会触发panic并退出。
+
+`内部可变性(Interior mutability)`： 可以在即便 `RefCell<T>` 自身是不可变的情况下修改其内部的值。令一个值在其方法内部能够修改自身，而在值方法外部的代码中仍视为不可变
+
+`测试替身(test double)`: 代表一个在测试中替代某个类型的类型，如 `mock` 对象
+
+```rust
+pub trait Messenger {
+    fn send(&self, msg: &str);
+}
+
+pub struct LimitTracker<'a, T: Messenger> {
+    messenger: &'a T,
+    value: usize,
+    max: usize,
+}
+
+impl<'a, T> LimitTracker<'a, T>
+    where T: Messenger {
+    pub fn new(messenger: &T, max: usize) -> LimitTracker<T> {
+        LimitTracker {
+            messenger,
+            value: 0,
+            max,
+        }
+    }
+
+    pub fn set_value(&mut self, value: usize) {
+        self.value = value;
+
+        let percentage_of_max = self.value as f64 / self.max as f64;
+
+        if percentage_of_max >= 1.0 {
+            self.messenger.send("Error: You are over your quota!");
+        } else if percentage_of_max >= 0.9 {
+             self.messenger.send("Urgent warning: You've used up over 90% of your quota!");
+        } else if percentage_of_max >= 0.75 {
+            self.messenger.send("Warning: You've used up over 75% of your quota!");
+        }
+    }
+}
+```
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockMessenger {
+        sent_messages: Vec<String>,
+    }
+
+    impl MockMessenger {
+        fn new() -> MockMessenger {
+            MockMessenger { sent_messages: vec![] }
+        }
+    }
+
+    impl Messenger for MockMessenger {
+        fn send(&self, message: &str) {
+            self.sent_messages.push(String::from(message));
+        }
+    }
+
+    #[test]
+    fn it_sends_an_over_75_percent_warning_message() {
+        let mock_messenger = MockMessenger::new();
+        let mut limit_tracker = LimitTracker::new(&mock_messenger, 100);
+
+        limit_tracker.set_value(80);
+
+        assert_eq!(mock_messenger.sent_messages.len(), 1);
+    }
+}
+```
+
+不能修改 `MockMessenger` 来记录消息，因为 `send` 方法获取了 `self` 的不可变引用
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    struct MockMessenger {
+        sent_messages: RefCell<Vec<String>>,
+    }
+
+    impl MockMessenger {
+        fn new() -> MockMessenger {
+            MockMessenger { sent_messages: RefCell::new(vec![]) }
+        }
+    }
+
+    impl Messenger for MockMessenger {
+        fn send(&self, message: &str) {
+            self.sent_messages.borrow_mut().push(String::from(message));
+        }
+    }
+
+    #[test]
+    fn it_sends_an_over_75_percent_warning_message() {
+        // --snip--
+
+        assert_eq!(mock_messenger.sent_messages.borrow().len(), 1);
+    }
+}
+```
+
+当创建不可变和可变引用时，分别使用 & 和 &mut 语法。对于 RefCell<T> 来说，则是 borrow(返回 Ref<T> 类型的智能指针) 和 borrow_mut(返回 RefMut<T> 类型的智能指针) 方法
+
+RefCell<T> 记录当前有多少个活动的 Ref<T> 和 RefMut<T> 智能指针。每次调用 borrow，RefCell<T> 将活动的不可变借用计数加一。当 Ref<T> 值离开作用域时，不可变借用计数减一
+
+RefCell<T> 在任何时候内部计数只允许有多个不可变借用或一个可变借用
+
+### Rc<T> 和 RefCell<T> 实现多个可变借用
+
+Rc<T> 允许对相同内存有多个所有者，不过只能提供内存的不可变访问，只需实现储存了 RefCell<T> 的 Rc<T>，就可以得到有多个所有者并且可以修改的内存
+
+```rust
+#[derive(Debug)]
+enum List {
+    Cons(Rc<RefCell<i32>>, Rc<List>),
+    Nil,
+}
+
+use crate::List::{Cons, Nil};
+use std::rc::Rc;
+use std::cell::RefCell;
+
+fn main() {
+    let value = Rc::new(RefCell::new(5));
+
+    let a = Rc::new(Cons(Rc::clone(&value), Rc::new(Nil)));
+
+    let b = Cons(Rc::new(RefCell::new(6)), Rc::clone(&a));
+    let c = Cons(Rc::new(RefCell::new(10)), Rc::clone(&a));
+
+    *value.borrow_mut() += 10;
+
+    println!("a after = {:?}", a);
+    println!("b after = {:?}", b);
+    println!("c after = {:?}", c);
+}
+```
+
+### 内存泄露
+
+`内存泄露(memory leak)`: 永远也不会被清理的内存
+
+`Rust` 并不保证完全地避免内存泄漏，这意味着内存泄漏在 `Rust` 被认为是内存安全的
+
+可从`Rc<T>` 和 `RefCell<T>` 看出：创建**引用循环**的可能性是存在的。这会造成内存泄漏，因为每一项的引用计数永远也到不了 0，其值也永远不会被丢弃。
+
+#### 引用循环
+
+```rust
+use std::rc::Rc;
+use std::cell::RefCell;
+use crate::List::{Cons, Nil};
+
+#[derive(Debug)]
+enum List {
+    Cons(i32, RefCell<Rc<List>>),
+    Nil,
+}
+
+impl List {
+    fn tail(&self) -> Option<&RefCell<Rc<List>>> {
+        match self {
+            Cons(_, item) => Some(item),
+            Nil => None,
+        }
+    }
+}
+```
+```rust
+let a = Rc::new(Cons(5, RefCell::new(Rc::new(Nil))));
+
+println!("a initial rc count = {}", Rc::strong_count(&a));
+println!("a next item = {:?}", a.tail());
+
+let b = Rc::new(Cons(10, RefCell::new(Rc::clone(&a))));
+
+println!("a rc count after b creation = {}", Rc::strong_count(&a));
+println!("b initial rc count = {}", Rc::strong_count(&b));
+println!("b next item = {:?}", b.tail());
+
+if let Some(link) = a.tail() {
+    *link.borrow_mut() = Rc::clone(&b);
+}
+
+println!("b rc count after changing a = {}", Rc::strong_count(&b));
+println!("a rc count after changing a = {}", Rc::strong_count(&a));
+
+// Uncomment the next line to see that we have a cycle;
+// it will overflow the stack
+// println!("a next item = {:?}", a.tail());
+```
+对于单向链表，从new head开始释放，后一项在前一项释放后的引用计数减1为0，进而链式释放
+对于上例，Rust 首先丢弃 b，使 b 中 Rc<List> 实例的引用计数减 1。然而，因为 a 仍然引用 b 中的 Rc<List>，Rc<List> 的引用计数是 1 而不是 0，所以 b 中的 Rc<List> 在堆上的内存不会被丢弃。接下来 Rust 会丢弃 a，同理这会将 a 中 Rc<List> 实例的引用计数从 2 减为 1。这个实例的内存也不能被丢弃。这些列表的内存将永远保持未被回收的状态
+在末尾注释段解注后，对应Some(ref)类型会经过一系列隐式解引用强制转换最终由 Display trait 方法实现输出，然而列表已形成了闭环，最终只会不断循环下去直至爆栈
+
+一个解决方案是重新组织数据结构，使得一部分引用拥有所有权而另一部分没有。换句话说，循环将由一些拥有所有权的关系和一些无所有权的关系组成，只有所有权关系才能影响值是否可以被丢弃。
+
+##### Weak<T>
+
+调用 `Rc::downgrade` 创建 `弱引用（weak reference）`，`Weak<T>` 类型的智能指针，并将 `weak_count` 加1
+
+强引用代表如何共享 `Rc<T>` 实例的所有权，但弱引用并不属于所有权关系。任何弱引用的循环无需使 `weak_count` 为0，只需在其相关的 `strong_count` 为 0 时即可被打断，从而使 `Rc<T>` 实例被清理
+
+`Weak<T>` 可描述内部连接结构
+而`Rc<T>` 则是外部调用内部引用的接口，倘若全被清理，内部的数据也应得到清理
+
+#####  树结构
+
+父节点应该拥有其子节点：如果父节点被丢弃了，其子节点也应该被丢弃，即父节点有对子节点的强引用
+
+然而子节点不应该拥有其父节点：如果丢弃子节点，其父节点应该依然存在，即子节点有对父节点的弱引用
+
+```rust
+use std::rc::{Rc, Weak};
+use std::cell::RefCell;
+
+#[derive(Debug)]
+struct Node {
+    value: i32,
+    parent: RefCell<Weak<Node>>,
+    children: RefCell<Vec<Rc<Node>>>,
+}
+
+fn main() {
+    let leaf = Rc::new(Node {
+        value: 3,
+        parent: RefCell::new(Weak::new()),
+        children: RefCell::new(vec![]),
+    });
+
+    println!("leaf parent = {:?}", leaf.parent.borrow().upgrade());
+
+    let branch = Rc::new(Node {
+        value: 5,
+        parent: RefCell::new(Weak::new()),
+        children: RefCell::new(vec![Rc::clone(&leaf)]),
+    });
+
+    *leaf.parent.borrow_mut() = Rc::downgrade(&branch);
+
+    println!("leaf parent = {:?}", leaf.parent.borrow().upgrade());
+}
+```
+没有无限的输出表明这段代码并没有造成引用循环
+
+Quiz:
+```rust
+fn main() {
+    let leaf = Rc::new(Node {
+        value: 3,
+        parent: RefCell::new(Weak::new()),
+        children: RefCell::new(vec![]),
+    });
+
+    println!(
+        "leaf strong = {}, weak = {}",
+        Rc::strong_count(&leaf),
+        Rc::weak_count(&leaf),
+    );
+
+    {
+        let branch = Rc::new(Node {
+            value: 5,
+            parent: RefCell::new(Weak::new()),
+            children: RefCell::new(vec![Rc::clone(&leaf)]),
+        });
+
+        *leaf.parent.borrow_mut() = Rc::downgrade(&branch);
+
+        println!(
+            "branch strong = {}, weak = {}",
+            Rc::strong_count(&branch),
+            Rc::weak_count(&branch),
+        );
+
+        println!(
+            "leaf strong = {}, weak = {}",
+            Rc::strong_count(&leaf),
+            Rc::weak_count(&leaf),
+        );
+    }
+
+    println!("leaf parent = {:?}", leaf.parent.borrow().upgrade());
+    println!(
+        "leaf strong = {}, weak = {}",
+        Rc::strong_count(&leaf),
+        Rc::weak_count(&leaf),
+    );
+}
+```
+
+## 无畏并发(fearless concurrency)
+
+多线程: 
+- `并发编程(Concurrent programming)`: 程序的不同部分相互独立的执行，异步
+- `并行编程(parallel programming)`: 程序不同部分于同时执行，同步
+
+通过利用所有权和类型检查，在 Rust 中很多并发错误都是 编译时 错误，而非运行时错误，因而无需花费大量时间尝试重现运行时并发 bug 出现的特定情况，Rust 会拒绝编译不正确的代码
+
+在大部分现代操作系统中，已执行程序的代码在一个 `进程(process)` 中运行，操作系统则负责管理多个进程。在程序内部，也可有多个同时运行的独立部分，即 `线程（threads）`
+
+多线程可改善运行速度，但因无法预先保证不同线程中的代码的执行顺序，会引发下列问题：
+- 竞争状态(Race conditions): 多个线程以不一致的顺序访问数据或资源
+- `死锁(Deadlocks)`: 两个线程相互等待对方停止使用其所拥有的资源，这会阻止它们继续运行
+- 只会发生在特定情况且难以稳定重现和修复的 bug
+
+`1:1`线程模式: 由编程语言调用操作系统（OS）内置 API 创建 OS 线程，一个 OS 线程对应一个语言线程，故而得名
+
+`M:N`线程模式: 编程语言提供的线程，称作**绿色(green)**线程，在不同数量的 OS 线程的上下文中得到执行，`M`个绿色线程对应`N`个 OS 线程
+
+`运行时`: 概念模糊，在不同语境中含义不同，此处指二进制文件中包含的由语言自身提供的代码。这些代码根据语言的不同可大可小，任何非汇编语言都会有一定数量的运行时代码
+
+由于 Rust 是较为底层的语言，Rust 标准库只提供了 1:1 线程模型实现。
+
+如果愿意牺牲性能来换取抽象，以获得对线程运行更精细的控制及更低的上下文切换成本，可使用实现了 M:N 线程模型的 crate
+
+编程语言提供的线程被称为 绿色（green）线程，使用绿色线程的语言会在不同数量的 OS 线程的上下文中执行它们。为此，绿色线程模式被称为 M:N 模型：M 个绿色线程对应 N 个 OS 线程，这里 M 和 N 不必相同。
+
+默认**并发和(或)并行**为**并发**，此处不做区分
+
+### 创建线程
+
+`thread::spawn` 新建线程，返回值类型 `JoinHandle`，拥有所有权
+
+```rust
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let handle = thread::spawn(|| {
+        for i in 1..10 {
+            println!("hi number {} from the spawned thread!", i);
+            thread::sleep(Duration::from_millis(1));
+        } // 若闭包调用完毕，则该线程结束
+    });
+
+    for i in 1..5 {
+        println!("hi number {} from the main thread!", i);
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    handle.join().unwrap(); // 等待所有线程结束
+}
+```
+这两线程可能会轮流运行，不过并不保证如此：这依赖操作系统如何调度线程
+
+输出大体上如下：
+hi number 1 from the main thread!
+hi number 1 from the spawned thread!
+hi number 2 from the main thread!
+hi number 2 from the spawned thread!
+hi number 3 from the main thread!
+hi number 3 from the spawned thread!
+hi number 4 from the main thread!
+hi number 4 from the spawned thread!
+hi number 5 from the spawned thread!
+
+这是因为当主线程(main)结束时，新线程也会结束，而不管其是否执行完毕
+
+`join` 方法: 等待自身线程结束。
+`阻塞(Blocking)`: 意味着阻止当前线程执行工作或退出
+
+于主线程(main)中调用handle.join()，阻塞主线程，等到handle所代表的线程结束，此处即等到所有线程结束
+
+### move 闭包
+
+经常与 `thread::spawn` 一起使用，因为它允许在一个线程中使用另一个线程的数据，捕获了定义该闭包的线程的环境
+
+```rust
+use std::thread;
+
+fn main() {
+    let v = vec![1, 2, 3];
+
+    let handle = thread::spawn(|| {
+        println!("Here's a vector: {:?}", v);
+    });
+
+    // uncomment the next line to see v aborted;
+    // it will cause a dangling reference error in the spawned thread
+    // drop(v); 
+
+    handle.join().unwrap();
+}
+```
+Rust 会 **推断** 如何捕获 v，然而 Rust 不知道这个新建线程会执行多久，所以无法知晓 v 的引用是否一直有效。
+
+```rust
+use std::thread;
+
+fn main() {
+    let v = vec![1, 2, 3];
+
+    let handle = thread::spawn(move || {
+        println!("Here's a vector: {:?}", v);
+    });
+
+    handle.join().unwrap();
+}
+```
+
+### 消息传递(message passing)实现在线程间传送数据
+
+不要通过共享内存来通讯；而是通过通讯来共享内存
+
+任何编程语言中的通道都类似于单所有权，因为一旦将一个值传送到通道中，将无法再使用这个值。
+
+共享内存类似于多所有权：多个线程可以同时访问相同的内存位置，存有风险
+
+**发送者(transmitter) -> 通道(channel) -> 接收者(receiver)**
+ROS2: 发布者(publisher) -> 主题(topic) -> 订阅者(subscriber)
+当发送者或接收者任一被丢弃时可以认为通道被 *关闭（closed）* 了
+
+`std::sync::mpsc`: multiple producer, single consumer
+
+`mpsc::channel`: create a channel, return a tuple of a transmitter and a receiver
+
+```rust
+use std::sync::mpsc;
+use std::thread;
+
+fn main() {
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let val = String::from("hi");
+        tx.send(val).unwrap();
+        // Uncomment the next line to panic;
+        // println!("val is {}", val);
+    });
+
+    let received = rx.recv().unwrap();
+    println!("Got: {}", received);
+}
+```
+
+send函数获取`val`值的所有权并移动其值归到receiver所有，以防原线程对值可能的修改导致的数据竞争现象，这也是 `mpsc` 要求只能有一个receiver的原因
+
+#### 多发布
+
+```rust
+// --snip--
+let (tx, rx) = mpsc::channel();
+
+thread::spawn(move || {
+    let vals = vec![
+        String::from("hi"),
+        String::from("from"),
+        String::from("the"),
+        String::from("thread"),
+    ];
+
+    for val in vals {
+        tx.send(val).unwrap();
+        thread::sleep(Duration::from_secs(1));
+    }
+});
+
+for received in rx {
+    println!("Got: {}", received);
+}
+```
+
+#### 共享状态并发
+
+`互斥器(mutex)`: mutual exclusion，任意时刻，其只允许一个线程访问某些数据
+
+`锁(lock)`: 互斥器通过锁系统 `保护(guarding)` 其数据。其记录了哪个线程有互斥器数据的排他访问权
+
+- 线程应在使用数据之前尝试获取锁。
+- 处理完被互斥器所保护的数据之后，必须解锁数据，这样其他线程才能够获取锁。
+
+`std::sync::Mutex<T>` 是一个智能指针，调用`lock`方法返回`MutexGuard`类型的智能指针，其实现了 `Deref` trait 来指向其内部数据；也提供了 `Drop` trait 实现当 `MutexGuard` 离开作用域时自动释放锁
+
+`Rc<T>` 并不能安全的在线程间共享，因为其并没有使用任何并发原语，来确保改变计数的操作不会被其他线程打断
+
+`Arc<T>`: atomically reference counted，原子引用计数，可安全用于并发环境的`Rc<T>`类型
+
+线程安全带有性能惩罚，故并未为所有原始类型实现原子性
+
+```rust
+use std::sync::{Mutex, Arc};
+use std::thread;
+
+fn main() {
+    let counter = Arc::new(Mutex::new(0));
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let counter = Arc::clone(&counter);
+        let handle = thread::spawn(move || {
+            let mut num = counter.lock().unwrap();
+
+            *num += 1;
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    println!("Result: {}", *counter.lock().unwrap());
+}
+```
+`Arc<T>`虽是不可变引用，但`Mutex<T>`的`lock`方法返回一个可修改内部值的可变引用，提供了内部可变性
+
+也就是说，`RefCell<T>` 之于 `Rc<T>`，等若于并发环境下 `Mutex<T>` 之于 `Arc<T>`
+
+确保所使用的类型可以用于并发环境的 trait 之一
+
+
+### 使用Sync和Send trait的可拓展并发
+
+`std::marker::Send` 标记 trait 表明类型的所有权可以在线程间传递，
+
+Rust 几乎所有基本类型都是 `Send` 的，任何完全由 `Send` 的类型组成的类型也会自动被标记为 `Send`，除了`Rc<T>`，裸指针(raw pointer)……
+
+`std::marker::Sync` 标记 trait 表明一个实现了 `Sync` 的类型可以安全的在多个线程中拥有其值的引用。对于任意类型 `T`，如果 `&T` 是 `Send` 的话 `T` 就是 `Sync` 的
+
+几乎所有基本类型是 `Sync` 的，完全由 `Sync` 的类型组成的类型也是 `Sync` 的，除了`Rc<T>`，`RefCell<T>`，`Cell<T>`……
+
+通常并不需要手动实现 Send 和 Sync trait，手动实现这些标记 trait 涉及到编写不安全的 Rust 代码
+那么如何得到发布的博文呢？我们希望强制执行的规则是草案博文在可以发布之前必须被审核通过。等待审核状态
+
+## 不安全Rust(unsafe Rust)
+
+不安全 Rust 之所以存在:
+- 静态分析本质上是保守的。
+- 底层计算机硬件固有的不安全性。Rust 需要能够直接与操作系统交互，甚至于能编写操作系统这样的底层系统！
+
+能力: 
+- 解引用裸指针
+- 调用不安全的函数或方法
+- 访问或修改可变静态变量
+- 实现不安全 trait
+- 访问 union 的字段
+
+`unsafe` 只提供了上述那五个不会被编译器检查内存安全的功能，而并不会关闭借用检查器或禁用任何其他 Rust 安全检查
+
+通过要求这五类操作必须位于标记为 `unsafe` 的块中，就能够知道任何与内存安全相关的错误必定位于 `unsafe` 块内
+
+### 解引用裸指针
+
+裸指针与引用和智能指针的区别：
+- 允许忽略借用规则，可以同时拥有不可变和可变的指针，或多个指向相同位置的可变指针
+- 不保证指向有效的内存
+- 允许为空
+- 不能实现任何自动清理功能
+
+`*mut T`: 可变裸指针
+`*const T`: 不可变裸指针，不可变意味着指针解引用之后不能直接赋值（，但指针指向地址可更改？）
+
+可以在安全代码中 创建 裸指针，只是不能在不安全块之外 解引用 裸指针
+
+`as`: 
