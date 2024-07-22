@@ -1119,7 +1119,7 @@ pub fn notify(item: impl Summary) {
 ### Trait Bound
 
 ```rust
-pub fn notify<T: Summary>(item: T {
+pub fn notify<T: Summary>(item: T) {
     item.summarize();
 }
 ```
